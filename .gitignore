@@ -5,3 +5,4 @@ node_modules/
 *.pyc
 .DS_Store
 backend/storage/uploads/
+backend/storage/chroma/

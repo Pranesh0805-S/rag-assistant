@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 
+from app.services.embedding_service import embed_texts
+from app.core.vectorstore import document_chunks_collection
 from app.core.deps import get_current_user
 from app.core.database import documents_collection, chunks_collection
 from app.services.pdf_service import validate_pdf, extract_text_by_page
@@ -40,8 +42,8 @@ async def upload_document(
     try:
         pages = extract_text_by_page(file_bytes)
     except ValueError as e:
-            os.remove(file_path)
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        os.remove(file_path)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     chunks = chunk_pages(pages)
 
@@ -67,8 +69,30 @@ async def upload_document(
         }
         for chunk in chunks
     ]
+
     if chunk_docs:
         chunks_collection.insert_many(chunk_docs)
+
+        # Embed chunks and store in Chroma for retrieval
+        chunk_texts = [c["text"] for c in chunks]
+        embeddings = embed_texts(chunk_texts)
+
+        document_chunks_collection.add(
+            ids=[
+                f"{doc_id}_{c['page_number']}_{c['chunk_index']}"
+                for c in chunks
+            ],
+            embeddings=embeddings,
+            documents=chunk_texts,
+            metadatas=[
+                {
+                    "doc_id": doc_id,
+                    "user_id": user_id,
+                    "page_number": c["page_number"],
+                }
+                for c in chunks
+            ],
+        )
 
     return {
         "id": doc_id,

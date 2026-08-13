@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 
+from pydantic import BaseModel
+from app.services.retrieval_service import retrieve_chunks
+from app.services.generation_service import generate_answer
 from app.services.embedding_service import embed_texts
 from app.core.vectorstore import document_chunks_collection
 from app.core.deps import get_current_user
@@ -101,4 +104,46 @@ async def upload_document(
         "chunk_count": len(chunks),
         "status": "ready",
         "uploaded_at": doc_record["uploaded_at"],
+    }
+    
+class AskRequest(BaseModel):
+    question: str
+    top_k: int = 5
+
+
+@router.post("/ask")
+def ask_question(
+    payload: AskRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = str(current_user["_id"])
+
+    # 1. Retrieve top-k relevant chunks for this user only
+    retrieved = retrieve_chunks(
+        query=payload.question,
+        user_id=user_id,
+        top_k=payload.top_k,
+    )
+
+    if not retrieved:
+        return {"answer": "I couldn't find anything relevant in your documents.", "citations": []}
+
+    # 2. Generate answer from Claude using those chunks
+    result = generate_answer(payload.question, retrieved)
+
+    # 3. Map used_indices back to real citation info
+    citations = []
+    for idx in result["used_indices"]:
+        if 0 <= idx < len(retrieved):
+            chunk = retrieved[idx]
+            doc = documents_collection.find_one({"_id": chunk["doc_id"]})
+            citations.append({
+                "doc_id": chunk["doc_id"],
+                "filename": doc["filename"] if doc else "",
+                "page_number": chunk["page_number"],
+            })
+
+    return {
+        "answer": result["answer"],
+        "citations": citations,
     }

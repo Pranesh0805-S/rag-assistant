@@ -1,6 +1,6 @@
 .env
 __pycache__/
-venv/
+venv_clean/
 node_modules/
 *.pyc
 .DS_Store
